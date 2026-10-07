@@ -73,6 +73,7 @@ for f in *.c crypto/*.c; do
 	$TRIPLE-clang $CFLAGS -include winnative/compat.h -Iwinnative/include -Iwindows -c "$f" -o "$OBJ/$(echo "$f" | tr / _).o"
 done
 $TRIPLE-clang $CFLAGS -c winnative/compat.c -o "$OBJ/winnative_compat.o"
+$TRIPLE-clang $CFLAGS -include winnative/compat.h -Iwinnative/include -Iwindows -c winnative/batch.c -o "$OBJ/winnative_batch.o"
 
 $TRIPLE-clang $CFLAGS -static -Wl,--gc-sections -Wl,--nxcompat -Wl,--dynamicbase -s \
 	-o "$OUT/winws2.exe" "$OBJ"/*.o windows/res/winws_res$BITS.o \

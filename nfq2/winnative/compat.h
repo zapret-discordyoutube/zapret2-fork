@@ -236,6 +236,13 @@ size_t wn_fwrite(const void *ptr, size_t size, size_t n, FILE *f);
 #define gmtime_r wn_gmtime_r
 #define tm_zone tm_sec<0 ? "" : wn_last_zone()
 
+// batched reinjection of unmodified packets. see batch.c
+#include "windivert/windivert.h"
+BOOL wn_WinDivertRecvEx(HANDLE handle, VOID *pPacket, UINT packetLen, UINT *pRecvLen, UINT64 flags, WINDIVERT_ADDRESS *pAddr, UINT *pAddrLen, LPOVERLAPPED lpOverlapped);
+BOOL wn_WinDivertSend(HANDLE handle, const VOID *pPacket, UINT packetLen, UINT *pSendLen, const WINDIVERT_ADDRESS *pAddr);
+#define WinDivertRecvEx wn_WinDivertRecvEx
+#define WinDivertSend wn_WinDivertSend
+
 // real entry point is in compat.c. it converts utf-16 command line to utf-8 argv
 #define main wn_main
 #endif // !WN_COMPAT_IMPL
