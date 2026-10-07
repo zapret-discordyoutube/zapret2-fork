@@ -236,6 +236,15 @@ size_t wn_fwrite(const void *ptr, size_t size, size_t n, FILE *f);
 #define gmtime_r wn_gmtime_r
 #define tm_zone tm_sec<0 ? "" : wn_last_zone()
 
+// append mode files (debug log, autohostlist) are opened once and kept. upstream opens and closes the file for every line
+int wn_fclose(FILE *f);
+#define fclose wn_fclose
+
+// unix signals replacement. see "control" in compat.c
+DWORD wn_WaitForSingleObject(HANDLE h, DWORD ms);
+void wn_control_poll(void);
+#define WaitForSingleObject wn_WaitForSingleObject
+
 // batched reinjection of unmodified packets. see batch.c
 #include "windivert/windivert.h"
 BOOL wn_WinDivertRecvEx(HANDLE handle, VOID *pPacket, UINT packetLen, UINT *pRecvLen, UINT64 flags, WINDIVERT_ADDRESS *pAddr, UINT *pAddrLen, LPOVERLAPPED lpOverlapped);

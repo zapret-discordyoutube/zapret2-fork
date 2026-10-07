@@ -6,6 +6,7 @@
 #include "include/wordexp.h"
 #include "include/sys/utsname.h"
 #include "include/sys/cygwin.h"
+#include "args.h"
 
 #define WN_PATH_MAX 32768
 
@@ -228,8 +229,99 @@ char *wn_basename(char *path)
 
 // ---------------------------------------------------------------- utf-8 file api
 
+// ---- append mode cache
+// upstream writes every log line as fopen("at") + fprintf + fclose. on windows that is several syscalls,
+// path conversion and antivirus scan per line. here the file stays open, fclose() only flushes.
+// the file is opened with full sharing. if somebody deletes it, it is reopened (checked once per second).
+#define WN_APPEND_MAX 4
+static struct
+{
+	char *path;
+	FILE *F;
+	DWORD checked;
+} wn_append[WN_APPEND_MAX];
+
+static FILE *append_open(const wchar_t *w, bool binary_plus)
+{
+	HANDLE h = CreateFileW(w, binary_plus ? (GENERIC_READ | FILE_APPEND_DATA) : FILE_APPEND_DATA,
+		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE)
+	{
+		errno = GetLastError() == ERROR_ACCESS_DENIED ? EACCES : ENOENT;
+		return NULL;
+	}
+	int fd = _open_osfhandle((intptr_t)h, _O_APPEND | _O_BINARY);
+	if (fd < 0)
+	{
+		CloseHandle(h);
+		return NULL;
+	}
+	FILE *F = _fdopen(fd, "ab");
+	if (!F) _close(fd);
+	return F;
+}
+static bool append_stale(FILE *F)
+{
+	// deleted file with an open handle stays in "delete pending" state
+	FILE_STANDARD_INFO si;
+	HANDLE h = (HANDLE)_get_osfhandle(_fileno(F));
+	return h == INVALID_HANDLE_VALUE || !GetFileInformationByHandleEx(h, FileStandardInfo, &si, sizeof(si)) || si.DeletePending || !si.NumberOfLinks;
+}
+static FILE *append_get(const char *path, const char *mode)
+{
+	int i, free_slot = -1;
+	for (i = 0; i < WN_APPEND_MAX; i++)
+	{
+		if (!wn_append[i].path)
+		{
+			if (free_slot < 0) free_slot = i;
+		}
+		else if (!strcmp(wn_append[i].path, path))
+			return wn_append[i].F;
+	}
+	wchar_t *w = path_to_w(path);
+	if (!w)
+	{
+		errno = ENOENT;
+		return NULL;
+	}
+	FILE *F = append_open(w, strchr(mode, '+') != NULL);
+	free(w);
+	if (F && free_slot >= 0 && (wn_append[free_slot].path = strdup(path)))
+	{
+		wn_append[free_slot].F = F;
+		wn_append[free_slot].checked = GetTickCount();
+	}
+	// no free slot : the caller gets an ordinary stream and fclose() really closes it
+	return F;
+}
+int wn_fclose(FILE *f)
+{
+	for (int i = 0; i < WN_APPEND_MAX; i++)
+		if (wn_append[i].path && wn_append[i].F == f)
+		{
+			int r = fflush(f);
+			DWORD now = GetTickCount();
+			if (now - wn_append[i].checked >= 1000)
+			{
+				wn_append[i].checked = now;
+				if (append_stale(f))
+				{
+					fclose(f);
+					free(wn_append[i].path);
+					wn_append[i].path = NULL;
+					wn_append[i].F = NULL;
+				}
+			}
+			return r;
+		}
+	return fclose(f);
+}
+
 FILE *wn_fopen(const char *path, const char *mode)
 {
+	if (mode[0] == 'a') return append_get(path, mode);
+
 	wchar_t wmode[16];
 	size_t i;
 	bool bt = false;
@@ -591,6 +683,7 @@ int uname(struct utsname *u)
 
 #define WN_NSIG 32
 static void (*sig_handlers[WN_NSIG])(int);
+static void ctl_init(void);
 static bool ctrl_installed = false;
 
 static BOOL WINAPI ctrl_handler(DWORD type)
@@ -618,6 +711,7 @@ int sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
 	if (act)
 	{
 		sig_handlers[sig] = (act->sa_handler == SIG_DFL || act->sa_handler == SIG_IGN) ? NULL : act->sa_handler;
+		ctl_init();
 		if (!ctrl_installed && (sig == SIGINT || sig == SIGTERM))
 		{
 			SetConsoleCtrlHandler(ctrl_handler, TRUE);
@@ -625,6 +719,106 @@ int sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
 		}
 	}
 	return 0;
+}
+
+// ---------------------------------------------------------------- control
+// there is no kill -HUP on windows. every unix signal of winws2 gets a named event :
+//   Global\winws2_sig_<pid>_hup   reload lists
+//   Global\winws2_sig_<pid>_usr1  dump conntrack
+//   Global\winws2_sig_<pid>_usr2  dump autohostlist counters and ip cache
+//   Global\winws2_sig_<pid>_term  graceful stop
+// events are polled from the main thread (at most every 50 ms), so handlers run in the main thread.
+// "winws2 --wn-signal=<hup|usr1|usr2|term>[:<pid>]" sets the event. without pid - for every running winws2.
+
+static const struct
+{
+	const char *name;
+	int sig;
+} wn_ctl_sigs[] = { { "hup", SIGHUP }, { "usr1", SIGUSR1 }, { "usr2", SIGUSR2 }, { "term", SIGTERM } };
+#define WN_CTL_COUNT (sizeof(wn_ctl_sigs) / sizeof(*wn_ctl_sigs))
+static HANDLE wn_ctl_events[WN_CTL_COUNT];
+static bool wn_ctl_ready = false;
+static DWORD wn_ctl_tick = 0;
+
+static void ctl_event_name(char *buf, size_t size, DWORD pid, const char *name)
+{
+	snprintf(buf, size, "Global\\winws2_sig_%u_%s", (unsigned)pid, name);
+}
+static void ctl_init(void)
+{
+	char name[64];
+	if (wn_ctl_ready) return;
+	wn_ctl_ready = true;
+	for (size_t i = 0; i < WN_CTL_COUNT; i++)
+	{
+		ctl_event_name(name, sizeof(name), GetCurrentProcessId(), wn_ctl_sigs[i].name);
+		wn_ctl_events[i] = CreateEventA(NULL, FALSE, FALSE, name);
+	}
+}
+void wn_control_poll(void)
+{
+	if (!wn_ctl_ready) return;
+	DWORD now = GetTickCount();
+	if (now - wn_ctl_tick < 50) return;
+	wn_ctl_tick = now;
+	for (size_t i = 0; i < WN_CTL_COUNT; i++)
+		if (wn_ctl_events[i] && WaitForSingleObject(wn_ctl_events[i], 0) == WAIT_OBJECT_0)
+		{
+			void (*h)(int) = sig_handlers[wn_ctl_sigs[i].sig];
+			if (h) h(wn_ctl_sigs[i].sig);
+		}
+}
+DWORD wn_WaitForSingleObject(HANDLE h, DWORD ms)
+{
+	DWORD r = WaitForSingleObject(h, ms);
+	wn_control_poll();
+	return r;
+}
+// returns process exit code
+static int ctl_send(const char *spec)
+{
+	char sig[16], name[64];
+	const char *colon = strchr(spec, ':');
+	size_t l = colon ? (size_t)(colon - spec) : strlen(spec), i;
+	DWORD pid = colon ? (DWORD)strtoul(colon + 1, NULL, 10) : 0;
+	int sent = 0;
+
+	if (l >= sizeof(sig)) l = sizeof(sig) - 1;
+	memcpy(sig, spec, l);
+	sig[l] = 0;
+	for (i = 0; i < WN_CTL_COUNT && strcmp(sig, wn_ctl_sigs[i].name); i++);
+	if (i == WN_CTL_COUNT || (colon && !pid))
+	{
+		fprintf(stderr, "usage: --wn-signal=<hup|usr1|usr2|term>[:<pid>]\n");
+		return 2;
+	}
+	// event names contain pid. without pid try every process
+	DWORD pids[4096], cb = 0, n = 1;
+	if (pid)
+		pids[0] = pid;
+	else
+	{
+		BOOL WINAPI K32EnumProcesses(DWORD *lpidProcess, DWORD cb, DWORD *lpcbNeeded);
+		if (!K32EnumProcesses(pids, sizeof(pids), &cb)) cb = 0;
+		n = cb / sizeof(DWORD);
+	}
+	for (DWORD k = 0; k < n; k++)
+	{
+		if (pids[k] == GetCurrentProcessId()) continue;
+		ctl_event_name(name, sizeof(name), pids[k], sig);
+		HANDLE h = OpenEventA(EVENT_MODIFY_STATE, FALSE, name);
+		if (h)
+		{
+			if (SetEvent(h))
+			{
+				printf("%s sent to pid %u\n", sig, (unsigned)pids[k]);
+				sent++;
+			}
+			CloseHandle(h);
+		}
+	}
+	if (!sent) fprintf(stderr, "no running winws2 accepted the signal\n");
+	return sent ? 0 : 1;
 }
 
 // ---------------------------------------------------------------- sockets
@@ -729,394 +923,42 @@ int wn_inet_pton(int af, const char *src, void *dst)
 	return inet_pton(af, src, dst);
 }
 
-// ---------------------------------------------------------------- wordexp
-// shell-like splitting of @config file. supported : whitespace separation, '...', "...", backslash escape,
-// $VAR and ${VAR}, ~ at the beginning of a word. command substitution and unquoted shell operators are errors.
-// pathname expansion (* ? [) is not performed. characters are taken literally.
-
-struct we_buf
-{
-	char *p;
-	size_t len, cap;
-	bool have;
-};
-static bool we_putc(struct we_buf *b, char c)
-{
-	if (b->len + 1 >= b->cap)
-	{
-		size_t ncap = b->cap ? b->cap * 2 : 64;
-		char *np = (char*)realloc(b->p, ncap);
-		if (!np) return false;
-		b->p = np;
-		b->cap = ncap;
-	}
-	b->p[b->len++] = c;
-	b->p[b->len] = 0;
-	b->have = true;
-	return true;
-}
-static bool we_puts(struct we_buf *b, const char *s)
-{
-	for (; *s; s++) if (!we_putc(b, *s)) return false;
-	return true;
-}
-static bool we_finish(wordexp_t *we, struct we_buf *b)
-{
-	if (!b->have) return true;
-	char **nv = (char**)realloc(we->we_wordv, (we->we_wordc + 2) * sizeof(char*));
-	if (!nv) return false;
-	we->we_wordv = nv;
-	if (!(nv[we->we_wordc] = strdup(b->p ? b->p : ""))) return false;
-	nv[++we->we_wordc] = NULL;
-	b->len = 0;
-	if (b->p) *b->p = 0;
-	b->have = false;
-	return true;
-}
-static bool we_name_start(char c)
-{
-	return isalpha((unsigned char)c) || c == '_';
-}
-static bool we_name_char(char c)
-{
-	return isalnum((unsigned char)c) || c == '_';
-}
-// *ps points to '$'. on success *ps points to the last consumed char and *val is the value or NULL
-static int we_var(const char **ps, const char **val, char *name, size_t namesize)
-{
-	const char *s = *ps + 1;
-	size_t n = 0;
-	*val = NULL;
-	if (*s == '(') return WRDE_CMDSUB;
-	if (*s == '{')
-	{
-		for (s++; we_name_char(*s); s++)
-			if (n + 1 < namesize) name[n++] = *s;
-		if (*s != '}' || !n) return WRDE_SYNTAX;
-	}
-	else if (we_name_start(*s))
-	{
-		for (; we_name_char(*s); s++)
-			if (n + 1 < namesize) name[n++] = *s;
-		s--;
-	}
-	else
-	{
-		// lone '$' is literal
-		*val = "$";
-		return 0;
-	}
-	name[n] = 0;
-	*val = getenv(name);
-	if (!*val) *val = "";
-	*ps = s;
-	return 0;
-}
-void wordfree(wordexp_t *we)
-{
-	if (we && we->we_wordv)
-	{
-		for (size_t i = 0; i < we->we_wordc; i++) free(we->we_wordv[i]);
-		free(we->we_wordv);
-	}
-	if (we)
-	{
-		we->we_wordv = NULL;
-		we->we_wordc = 0;
-	}
-}
-int wordexp(const char *s, wordexp_t *we, int flags)
-{
-	struct we_buf b = { NULL, 0, 0, false };
-	char name[128];
-	const char *val;
-	int r = 0;
-
-	(void)flags;
-	we->we_wordc = 0;
-	we->we_offs = 0;
-	if (!(we->we_wordv = (char**)calloc(1, sizeof(char*)))) return WRDE_NOSPACE;
-
-#define WE_FAIL(code) { r = code; goto err; }
-#define WE_PUTC(c) { if (!we_putc(&b, c)) WE_FAIL(WRDE_NOSPACE) }
-
-	for (; *s; s++)
-	{
-		switch (*s)
-		{
-		case ' ': case '\t': case '\n': case '\r':
-			if (!we_finish(we, &b)) WE_FAIL(WRDE_NOSPACE)
-			break;
-		case '\'':
-			b.have = true;
-			for (s++; *s && *s != '\''; s++) WE_PUTC(*s)
-			if (!*s) WE_FAIL(WRDE_SYNTAX)
-			break;
-		case '"':
-			b.have = true;
-			for (s++; *s && *s != '"'; s++)
-			{
-				if (*s == '\\' && (s[1] == '$' || s[1] == '`' || s[1] == '"' || s[1] == '\\'))
-					WE_PUTC(*++s)
-				else if (*s == '`')
-					WE_FAIL(WRDE_CMDSUB)
-				else if (*s == '$')
-				{
-					if ((r = we_var(&s, &val, name, sizeof(name)))) goto err;
-					if (!we_puts(&b, val)) WE_FAIL(WRDE_NOSPACE)
-				}
-				else
-					WE_PUTC(*s)
-			}
-			if (!*s) WE_FAIL(WRDE_SYNTAX)
-			break;
-		case '\\':
-			if (s[1])
-				WE_PUTC(*++s)
-			else
-				WE_PUTC('\\')
-			break;
-		case '$':
-			if ((r = we_var(&s, &val, name, sizeof(name)))) goto err;
-			// unquoted value is split to fields
-			for (; *val; val++)
-			{
-				if (*val == ' ' || *val == '\t' || *val == '\n')
-				{
-					if (!we_finish(we, &b)) WE_FAIL(WRDE_NOSPACE)
-				}
-				else
-					WE_PUTC(*val)
-			}
-			break;
-		case '`':
-			WE_FAIL(WRDE_CMDSUB)
-		case '|': case '&': case ';': case '<': case '>': case '(': case ')': case '{': case '}':
-			WE_FAIL(WRDE_BADCHAR)
-		case '~':
-			if (!b.have && (!s[1] || s[1] == '/' || s[1] == ' ' || s[1] == '\t'))
-			{
-				val = getenv("HOME");
-				if (!val) val = getenv("USERPROFILE");
-				if (val)
-				{
-					if (!we_puts(&b, val)) WE_FAIL(WRDE_NOSPACE)
-					break;
-				}
-			}
-			WE_PUTC('~')
-			break;
-		default:
-			WE_PUTC(*s)
-		}
-	}
-	if (!we_finish(we, &b)) WE_FAIL(WRDE_NOSPACE)
-	free(b.p);
-	return 0;
-err:
-	free(b.p);
-	wordfree(we);
-	return r;
-}
-
-// ---------------------------------------------------------------- command line
-// cygwin1.dll does not use the windows argument splitter. it parses the raw command line itself and it also
-// expands @file arguments (response files) before main() is called. that is how "winws2 @config" really works
-// in the cygwin build : the engine never sees '@'. the same rules are reproduced here :
-// - separators are space, tab, CR, LF
-// - '...' and "..." group characters. inside "..." a backslash protects the next char and "" means one quote
-// - inside quotes \\ and \<quote> are escapes unless the word looks like a dos path (X:... or \\...)
-// - outside quotes a backslash protects the next char if the word has quotes or wildcard chars and is not a dos path
-// - @file is replaced by the content of the file. nesting is allowed. unlike cygwin "@file" in quotes works too
-// pathname expansion is not performed. wildcards, braces and ~ are taken literally.
-
-#define WN_AT_FILE_LEVEL 10
-
-struct arg_vec
-{
-	char **v;
-	int c, cap;
-};
-static bool av_add(struct arg_vec *av, char *word)
-{
-	if (av->c + 2 > av->cap)
-	{
-		int ncap = av->cap ? av->cap * 2 : 64;
-		char **nv = (char**)realloc(av->v, ncap * sizeof(char*));
-		if (!nv) return false;
-		av->v = nv;
-		av->cap = ncap;
-	}
-	av->v[av->c++] = word;
-	av->v[av->c] = NULL;
-	return true;
-}
-static bool cl_issep(char c)
-{
-	return c == ' ' || c == '\t' || c == '\n' || c == '\r';
-}
-static bool cl_isquote(char c)
-{
-	return c == '"' || c == '\'';
-}
-static bool cl_dos_path(const char *s)
-{
-	return (isalpha((unsigned char)s[0]) && s[1] == ':') || (s[0] == '\\' && s[1] == '\\');
-}
-// cmd points to opening quote. strip both quotes in place. returns position after the quoted text
-static char *cl_quoted_strip(char *cmd)
-{
-	char quote = *cmd, *p;
-	memmove(cmd, cmd + 1, strlen(cmd + 1) + 1);
-	if ((p = strchr(cmd, quote)))
-		memmove(p, p + 1, strlen(p + 1) + 1);
-	else
-		p = cmd + strlen(cmd);
-	return p;
-}
-// cmd points to opening quote. quotes are kept for the later pass. returns position after closing quote
-static char *cl_quoted_keep(char *cmd)
-{
-	char quote = *cmd, *p;
-	const char *stop = quote == '\'' ? "'" : "\\\"";
-	while (*cmd && *++cmd)
-	{
-		if (!(p = strpbrk(cmd, stop)))
-			return cmd + strlen(cmd); // no closing quote
-		if (*p == '\\')
-			cmd = p + 1;
-		else if (quote == '"' && p[1] == '"')
-		{
-			// doubled quote is a quoted quote
-			*p = '\\';
-			cmd = p + 1;
-		}
-		else
-			return p + 1;
-	}
-	return cmd;
-}
-// remove quotes and escapes from a word. result must be freed
-static char *cl_unquote(const char *word)
-{
-	if (*word != '~' && !strpbrk(word, "?*[\"'(){}")) return strdup(word);
-
-	bool dos = cl_dos_path(word);
-	if (!dos && cl_isquote(*word) && word[1] && word[2]) dos = cl_dos_path(word + 1);
-
-	char *pat = (char*)malloc(strlen(word) * 2 + 2), *p = pat, *res, *d;
-	const char *s;
-	if (!pat) return NULL;
-	// step 1 : every protected char gets a backslash
-	for (s = word; *s; s++)
-	{
-		if (!cl_isquote(*s))
-		{
-			if (dos && *s == '\\') *p++ = '\\';
-			*p++ = *s;
-		}
-		else
-		{
-			char quote = *s;
-			while (*++s && *s != quote)
-			{
-				if (!dos && *s == '\\' && (s[1] == quote || s[1] == '\\')) s++;
-				*p++ = '\\';
-				*p++ = *s;
-			}
-			if (!*s) break;
-		}
-	}
-	*p = 0;
-	// step 2 : backslash protected chars become plain chars
-	if ((res = (char*)malloc(strlen(pat) + 1)))
-	{
-		for (s = pat, d = res; *s; s++)
-		{
-			if (*s == '\\' && s[1]) s++;
-			*d++ = *s;
-		}
-		*d = 0;
-	}
-	free(pat);
-	return res;
-}
-static char *cl_read_file(const char *name, const char *tail)
-{
-	FILE *F = wn_fopen(name, "rb");
-	if (!F) return NULL;
-	char *buf = NULL;
-	long size;
-	if (!fseek(F, 0, SEEK_END) && (size = ftell(F)) >= 0 && !fseek(F, 0, SEEK_SET))
-	{
-		size_t tl = strlen(tail);
-		if ((buf = (char*)malloc((size_t)size + tl + 2)))
-		{
-			size_t rd = fread(buf, 1, (size_t)size, F);
-			// zero byte ends the text, as it would in cygwin
-			rd = strnlen(buf, rd);
-			buf[rd] = ' ';
-			memcpy(buf + rd + 1, tail, tl + 1);
-		}
-	}
-	fclose(F);
-	return buf;
-}
-// cmd is modified. every word is added as a separate allocated string
-static bool cl_parse(char *cmd, struct arg_vec *av, int level)
-{
-	while (*cmd)
-	{
-		if (cl_issep(*cmd))
-		{
-			cmd++;
-			continue;
-		}
-		char *word = cmd, *sawquote = NULL;
-		while (*cmd)
-		{
-			if (cl_isquote(*cmd))
-			{
-				sawquote = cmd;
-				cmd = (av->c > 0 && *word != '@') ? cl_quoted_keep(cmd) : cl_quoted_strip(cmd);
-			}
-			else
-				cmd++;
-			if (cl_issep(*cmd)) break;
-		}
-		if (*cmd) *cmd++ = 0;
-
-		char *arg = av->c ? cl_unquote(word) : strdup(word);
-		if (!arg) return false;
-		// cygwin expands only unquoted @file. "@file with spaces" is passed to the engine, which is limited to 16K
-		// and uses another parser. here the quoted form is expanded too
-		const char *atfile = (*word == '@' && sawquote != word) ? word + 1 : (cl_isquote(*word) && *arg == '@') ? arg + 1 : NULL;
-		if (av->c && atfile && level < WN_AT_FILE_LEVEL)
-		{
-			char *content = cl_read_file(atfile, cmd);
-			if (content)
-			{
-				free(arg);
-				bool b = cl_parse(content, av, level + 1);
-				free(content);
-				return b;
-			}
-		}
-		if (!av_add(av, arg)) return false;
-	}
-	return true;
-}
-
 // ---------------------------------------------------------------- entry point
 
 int main(void)
 {
-	struct arg_vec av = { NULL, 0, 0 };
+	struct wn_arg_vec av = { NULL, 0, 0 };
 	char *cmdline = w_to_u8(GetCommandLineW());
-	if (!cmdline || !cl_parse(cmdline, &av, 0) || av.c < 1) return 1;
+	if (!cmdline || !wn_cl_parse(cmdline, &av, 0) || av.c < 1) return 1;
 	free(cmdline);
 	int argc = av.c;
 	char **argv = av.v;
+
+	if (argc >= 2 && !strncmp(argv[1], "--wn-signal=", 12)) return ctl_send(argv[1] + 12);
+
+	// "$file", and "@file" that was not expanded above, are read by upstream code into a 16K buffer.
+	// longer file is silently cut there. read the whole file here, with the same word splitting rules.
+	if (argc >= 2 && (argv[1][0] == '@' || argv[1][0] == '$') && argv[1][1])
+	{
+		char *text = wn_cl_read_file(argv[1] + 1, "");
+		if (text)
+		{
+			wordexp_t we;
+			for (char *p = text; *p; p++) if (*p == '\n' || *p == '\r' || *p == '\t') *p = ' ';
+			if (wordexp(text, &we, WRDE_NOCMD))
+			{
+				fprintf(stderr, "failed to split command line options from file '%s'\n", argv[1] + 1);
+				return 1;
+			}
+			free(text);
+			struct wn_arg_vec nv = { NULL, 0, 0 };
+			if (!wn_av_add(&nv, argv[0])) return 1;
+			for (size_t i = 0; i < we.we_wordc; i++)
+				if (!wn_av_add(&nv, we.we_wordv[i])) return 1;
+			argc = nv.c;
+			argv = nv.v;
+		}
+	}
 
 	// cygwin always passes full path of the executable. EXEDIR depends on it
 	wchar_t *wexe = (wchar_t*)malloc(WN_PATH_MAX * sizeof(wchar_t));

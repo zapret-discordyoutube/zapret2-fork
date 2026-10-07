@@ -62,6 +62,7 @@ if ! build; then
 	git add nfq2/winnative
 	git commit -q -m "winws2 native: adapt compat layer to upstream changes" || true
 fi
+nfq2/winnative/tests/run.sh >>"$ROOT/binaries/my/build.log" 2>&1 || rollback "host tests failed"
 smoke || rollback "smoke test failed"
 git push -q origin main || { log "push failed"; exit 1; }
 log "synced to $(git describe --tags --always)"

@@ -12,5 +12,7 @@ typedef struct
 #define WRDE_BADVAL 3
 #define WRDE_CMDSUB 4
 #define WRDE_SYNTAX 5
+#define wordexp wn_wordexp
+#define wordfree wn_wordfree
 int wordexp(const char *words, wordexp_t *pwordexp, int flags);
 void wordfree(wordexp_t *pwordexp);

@@ -37,6 +37,7 @@ BOOL wn_WinDivertRecvEx(HANDLE handle, VOID *pPacket, UINT packetLen, UINT *pRec
 {
 	// receive buffer is about to be overwritten
 	wn_batch_flush();
+	wn_control_poll();
 	if (batch_off < 0) batch_off = getenv("WINWS2_NO_BATCH") != NULL;
 	rcv_buf = (const uint8_t*)pPacket;
 	rcv_size = packetLen;

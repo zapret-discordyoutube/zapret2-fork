@@ -1,0 +1,345 @@
+[
+ {
+  "arg": "--name=BEGplain",
+  "cygwin_names": [
+   "BEGplain",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG'sq simple'",
+  "cygwin_names": [
+   "BEGsq simple",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG\"dq simple\"",
+  "cygwin_names": [
+   "BEGdq simple",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG'a\\b'",
+  "cygwin_names": [
+   "BEGa\\b",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG'a\\\\b'",
+  "cygwin_names": [
+   "BEGa\\b",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG'tail\\'",
+  "cygwin_names": [
+   "BEGtail'",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG\"a\"\"b\"",
+  "cygwin_names": [
+   "BEGa\"b",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG\"a\\\\b\"",
+  "cygwin_names": [
+   "BEGa\\b",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEGa\\b",
+  "cygwin_names": [
+   "BEGa\\b",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEGa\\\\b",
+  "cygwin_names": [
+   "BEGa\\\\b",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEGa\\*b",
+  "cygwin_names": [
+   "BEGa*b",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG'*'",
+  "cygwin_names": [
+   "BEG*",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEGa'q'b",
+  "cygwin_names": [
+   "BEGaqb",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEGa\"q\"b",
+  "cygwin_names": [
+   "BEGaqb",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEGC:\\dir\\f*",
+  "cygwin_names": [
+   "BEGC:dirf*",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG'C:\\dir\\\\f'",
+  "cygwin_names": [
+   "BEGC:\\dir\\f",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG'(par)'",
+  "cygwin_names": [
+   "BEG(par)",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG'{a,b}'",
+  "cygwin_names": [
+   "BEG{a,b}",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG'~'",
+  "cygwin_names": [
+   "BEG~",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG~",
+  "cygwin_names": [
+   "BEG~",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG'a b'\\\\c",
+  "cygwin_names": [
+   "BEGa b\\c",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG'[abc]'",
+  "cygwin_names": [
+   "BEG[abc]",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG\\\\\\\\srv\\\\sh'q'",
+  "cygwin_names": [
+   "BEG\\\\srv\\shq",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG'я русский'",
+  "cygwin_names": [
+   "BEGя русский",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEGb'~~'",
+  "cygwin_names": [
+   "BEGb~~",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG)b",
+  "cygwin_names": [
+   "BEG)b",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG)(a (*",
+  "cygwin_names": [
+   "BEG)(a",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG:b?",
+  "cygwin_names": [
+   "BEG:b?",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG)]\\",
+  "cygwin_names": [
+   "BEG)]\\",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG[[a:",
+  "cygwin_names": [
+   "BEG[[a:",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG(}\\/b ))",
+  "cygwin_names": [
+   "BEG(}/b",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG\\]((:\"\":",
+  "cygwin_names": [
+   "BEG]((::",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG/a?/",
+  "cygwin_names": [
+   "BEG/a?/",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG*([/}[?",
+  "cygwin_names": [
+   "BEG*([/}[?",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG)[?/:",
+  "cygwin_names": [
+   "BEG)[?/:",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEGaa]:]?(",
+  "cygwin_names": [
+   "BEGaa]:]?(",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG)?:",
+  "cygwin_names": [
+   "BEG)?:",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG}]~\\b",
+  "cygwin_names": [
+   "BEG}]~b",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG/~/\\\\/",
+  "cygwin_names": [
+   "BEG/~/\\\\/",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG*",
+  "cygwin_names": [
+   "BEG*",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG\\*",
+  "cygwin_names": [
+   "BEG*",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG\"b[?]b\"/",
+  "cygwin_names": [
+   "BEGb[?]b/",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG//?] /:",
+  "cygwin_names": [
+   "BEG//?]",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG/]? \\",
+  "cygwin_names": [
+   "BEG/]?",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG[*~/",
+  "cygwin_names": [
+   "BEG[*~/",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG\"[\"",
+  "cygwin_names": [
+   "BEG[",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG]]b",
+  "cygwin_names": [
+   "BEG]]b",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG]\\~]",
+  "cygwin_names": [
+   "BEG]\\~]",
+   "SECOND"
+  ]
+ },
+ {
+  "arg": "--name=BEG']a']'['",
+  "cygwin_names": [
+   "BEG]a][",
+   "SECOND"
+  ]
+ }
+]
