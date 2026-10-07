@@ -927,7 +927,7 @@ err:
 // - '...' and "..." group characters. inside "..." a backslash protects the next char and "" means one quote
 // - inside quotes \\ and \<quote> are escapes unless the word looks like a dos path (X:... or \\...)
 // - outside quotes a backslash protects the next char if the word has quotes or wildcard chars and is not a dos path
-// - @file is replaced by the content of the file. nesting is allowed
+// - @file is replaced by the content of the file. nesting is allowed. unlike cygwin "@file" in quotes works too
 // pathname expansion is not performed. wildcards, braces and ~ are taken literally.
 
 #define WN_AT_FILE_LEVEL 10
@@ -1086,18 +1086,23 @@ static bool cl_parse(char *cmd, struct arg_vec *av, int level)
 		}
 		if (*cmd) *cmd++ = 0;
 
-		if (av->c && sawquote != word && *word == '@' && level < WN_AT_FILE_LEVEL)
+		char *arg = av->c ? cl_unquote(word) : strdup(word);
+		if (!arg) return false;
+		// cygwin expands only unquoted @file. "@file with spaces" is passed to the engine, which is limited to 16K
+		// and uses another parser. here the quoted form is expanded too
+		const char *atfile = (*word == '@' && sawquote != word) ? word + 1 : (cl_isquote(*word) && *arg == '@') ? arg + 1 : NULL;
+		if (av->c && atfile && level < WN_AT_FILE_LEVEL)
 		{
-			char *content = cl_read_file(word + 1, cmd);
+			char *content = cl_read_file(atfile, cmd);
 			if (content)
 			{
+				free(arg);
 				bool b = cl_parse(content, av, level + 1);
 				free(content);
 				return b;
 			}
 		}
-		char *arg = av->c ? cl_unquote(word) : strdup(word);
-		if (!arg || !av_add(av, arg)) return false;
+		if (!av_add(av, arg)) return false;
 	}
 	return true;
 }
