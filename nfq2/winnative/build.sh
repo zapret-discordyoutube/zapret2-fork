@@ -63,9 +63,13 @@ if [ ! -f "$DEPS/lib/libz.a" ]; then
 	cp "$Z/zlib.h" "$Z/zconf.h" "$DEPS/include/"
 fi
 
+# the gui recognizes the banner "github version <ver> (<hash>)"
+GH_VER=$(git -C "$ROOT" describe --tags --always 2>/dev/null || echo unknown)
+GH_HASH=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
+
 CFLAGS="-std=gnu99 $WN_OPTIMIZE -flto -ffunction-sections -fdata-sections $LJ_CPU \
 	-Wno-address-of-packed-member -Wno-parentheses -Wno-pointer-sign -Wno-logical-op-parentheses -Wno-dangling-else \
-	-I$DEPS/include -I$DEPS/include/luajit-2.1 -DLUAJIT"
+	-I$DEPS/include -I$DEPS/include/luajit-2.1 -DLUAJIT -DZAPRET_GH_VER=$GH_VER-native -DZAPRET_GH_HASH=$GH_HASH"
 
 cd "$NFQ2"
 rm -f "$OBJ"/*.o
