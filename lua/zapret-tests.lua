@@ -1047,6 +1047,7 @@ function test_rawsend(opts)
 	print("send ipv4 udp using pure rawsend without dissect")
 	test_assert(rawsend_print(raw, {repeats=5}))
 
+	target = nil
 	for ifname,ifinfo in pairs(get_ifaddrs()) do
 		for k,v in pairs(ifinfo.addr) do
 			if #v.addr==16 and (string.sub(v.addr,1,1)=="\xFC" or string.sub(v.addr,1,1)=="\xFD") then
