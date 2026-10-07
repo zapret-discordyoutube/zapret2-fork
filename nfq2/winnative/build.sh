@@ -3,12 +3,17 @@
 #
 #   nfq2/winnative/build.sh [x86_64|i686]
 #
+# The old engine winws.exe (zapret1, https://github.com/bol-van/zapret) is built by the same layer :
+#   WN_ENGINE=winws1 ZAPRET1_SRC=/path/to/zapret nfq2/winnative/build.sh
+#
 # Environment :
 #   WN_TOOLCHAIN - directory of llvm-mingw (msvcrt flavour). default : ~/tools/llvm-mingw
 #   WN_DEPS      - where luajit and zlib are downloaded and built. default : ~/tools/winws2-deps
 #   WN_OPTIMIZE  - optimization flags of the engine. default : -O2
 #   WN_LJ_OPTIMIZE - optimization flags of luajit. default : -Os (its hot part is hand written assembler anyway)
-# Result : binaries/my/winnative-<arch>/winws2.exe
+#   WN_ENGINE    - winws2 (default) or winws1
+#   ZAPRET1_SRC  - checkout of bol-van/zapret, required for winws1
+# Result : binaries/my/winnative-<arch>/winws2.exe or winws.exe
 
 set -e
 
@@ -28,10 +33,18 @@ WN_OPTIMIZE=${WN_OPTIMIZE:--O2}
 WN_LJ_OPTIMIZE=${WN_LJ_OPTIMIZE:--Os}
 LUAJIT_RELEASE=2.1-20250826
 ZLIB_RELEASE=1.3.2
+WN_ENGINE=${WN_ENGINE:-winws2}
+case "$WN_ENGINE" in
+	winws2) SRC=$NFQ2; SRCROOT=$ROOT; EXE=winws2.exe; RES=windows/res/winws_res$BITS.o; XLIBS="-liphlpapi -lntdll" ;;
+	winws1)
+		[ -d "${ZAPRET1_SRC:-}/nfq" ] || { echo "set ZAPRET1_SRC to a checkout of bol-van/zapret" >&2; exit 1; }
+		SRC=$ZAPRET1_SRC/nfq; SRCROOT=$ZAPRET1_SRC; EXE=winws.exe; RES="windows/res/$BITS/winicon.o windows/res/$BITS/winmanifest.o"; XLIBS="-lwlanapi" ;;
+	*) echo "unknown engine $WN_ENGINE" >&2; exit 1 ;;
+esac
 TRIPLE=$ARCH-w64-mingw32
 DEPS=$WN_DEPS/$ARCH
 OUT=$ROOT/binaries/my/winnative-$ARCH
-OBJ=$DEPS/obj
+OBJ=$DEPS/obj-$WN_ENGINE
 
 PATH=$WN_TOOLCHAIN/bin:$PATH
 export PATH
@@ -66,25 +79,27 @@ if [ ! -f "$DEPS/lib/libz.a" ]; then
 fi
 
 # the gui recognizes the banner "github version <ver> (<hash>)"
-GH_VER=$(git -C "$ROOT" describe --tags --always 2>/dev/null || echo unknown)
-GH_HASH=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
+GH_VER=$(git -C "$SRCROOT" describe --tags --always 2>/dev/null || echo unknown)
+GH_HASH=$(git -C "$SRCROOT" rev-parse HEAD 2>/dev/null || echo unknown)
 
 CFLAGS="-std=gnu99 $WN_OPTIMIZE -flto -ffunction-sections -fdata-sections $LJ_CPU \
 	-Wno-address-of-packed-member -Wno-parentheses -Wno-pointer-sign -Wno-logical-op-parentheses -Wno-dangling-else \
 	-I$DEPS/include -I$DEPS/include/luajit-2.1 -DLUAJIT -DZAPRET_GH_VER=$GH_VER-native -DZAPRET_GH_HASH=$GH_HASH"
 
-cd "$NFQ2"
+cd "$SRC"
 rm -f "$OBJ"/*.o
+W=$HERE
 for f in *.c crypto/*.c; do
-	$TRIPLE-clang $CFLAGS -include winnative/compat.h -Iwinnative/include -Iwindows -c "$f" -o "$OBJ/$(echo "$f" | tr / _).o"
+	$TRIPLE-clang $CFLAGS -include "$W/compat.h" -I"$W/include" -Iwindows -c "$f" -o "$OBJ/$(echo "$f" | tr / _).o"
 done
-$TRIPLE-clang $CFLAGS -c winnative/compat.c -o "$OBJ/winnative_compat.o"
-$TRIPLE-clang $CFLAGS -c winnative/args.c -o "$OBJ/winnative_args.o"
-$TRIPLE-clang $CFLAGS -include winnative/compat.h -Iwinnative/include -Iwindows -c winnative/batch.c -o "$OBJ/winnative_batch.o"
+$TRIPLE-clang $CFLAGS -c "$W/compat.c" -o "$OBJ/winnative_compat.o"
+$TRIPLE-clang $CFLAGS -c "$W/args.c" -o "$OBJ/winnative_args.o"
+$TRIPLE-clang $CFLAGS -include "$W/compat.h" -I"$W/include" -Iwindows -c "$W/batch.c" -o "$OBJ/winnative_batch.o"
 
+[ "$WN_ENGINE" = winws2 ] && LUALIBS="-lluajit-5.1" || LUALIBS=
 $TRIPLE-clang $CFLAGS -static -Wl,--gc-sections -Wl,--nxcompat -Wl,--dynamicbase -s \
-	-o "$OUT/winws2.exe" "$OBJ"/*.o windows/res/winws_res$BITS.o \
-	-L"$DEPS/lib" -lluajit-5.1 -lz -Lwindows/windivert -lwindivert$BITS \
-	-lole32 -loleaut32 -liphlpapi -lntdll -lws2_32 -ladvapi32 -luuid -lwinpthread
+	-o "$OUT/$EXE" "$OBJ"/*.o $RES \
+	-L"$DEPS/lib" $LUALIBS -lz -Lwindows/windivert -lwindivert$BITS \
+	-lole32 -loleaut32 $XLIBS -lws2_32 -ladvapi32 -luuid -lwinpthread
 
-ls -l "$OUT/winws2.exe"
+ls -l "$OUT/$EXE"

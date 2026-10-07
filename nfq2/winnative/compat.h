@@ -117,6 +117,8 @@ struct sigaction
 #define SA_RESTART 0
 #define SA_SIGINFO 0
 int sigaction(int sig, const struct sigaction *act, struct sigaction *oact);
+// zapret1 uses signal(). same handler table as sigaction
+void (*wn_signal(int sig, void (*handler)(int)))(int);
 #define sigemptyset(s) (*(s)=0)
 #define sigfillset(s) (*(s)=~0)
 #define sigaddset(s,n) (*(s)|=1<<((n)&31))
@@ -131,6 +133,8 @@ char *wn_basename(char *path);
 int chown(const char *path, uid_t owner, gid_t group);
 uid_t getuid(void);
 int wn_close(int fd);
+char *get_current_dir_name(void);
+int wn_chdir(const char *path);
 int setenv(const char *name, const char *value, int overwrite);
 int unsetenv(const char *name);
 time_t timegm(struct tm *tm);
@@ -177,6 +181,9 @@ int wn_rename(const char *from, const char *to);
 #define dirname wn_dirname
 #define basename wn_basename
 #define close wn_close
+#undef signal
+#define signal wn_signal
+#define chdir wn_chdir
 #define mkdir(path,mode) wn_mkdir(path)
 // cygwin malloc returns zeroed memory for big blocks and some code relies on it (windivert_filter emptiness check).
 // native heap returns garbage. zero everything to stay on the safe side

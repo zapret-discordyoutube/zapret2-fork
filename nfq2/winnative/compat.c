@@ -191,6 +191,31 @@ ex:
 	return res;
 }
 
+char *get_current_dir_name(void)
+{
+	wchar_t *w = (wchar_t*)malloc(WN_PATH_MAX * sizeof(wchar_t));
+	char *s = NULL;
+	if (w)
+	{
+		DWORD n = GetCurrentDirectoryW(WN_PATH_MAX, w);
+		if (n && n < WN_PATH_MAX) s = w_to_posix(w);
+		free(w);
+	}
+	return s;
+}
+int wn_chdir(const char *path)
+{
+	wchar_t *w = path_to_w(path);
+	if (!w)
+	{
+		errno = ENOENT;
+		return -1;
+	}
+	int r = _wchdir(w);
+	free(w);
+	return r;
+}
+
 // posix dirname/basename. both separators are accepted. input string is modified
 static size_t path_root_len(const char *path)
 {
@@ -721,6 +746,15 @@ int sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
 	return 0;
 }
 
+void (*wn_signal(int sig, void (*handler)(int)))(int)
+{
+	struct sigaction sa, old;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = handler;
+	if (sigaction(sig, &sa, &old)) return SIG_ERR;
+	return old.sa_handler ? old.sa_handler : SIG_DFL;
+}
+
 // ---------------------------------------------------------------- control
 // there is no kill -HUP on windows. every unix signal of winws2 gets a named event :
 //   Global\winws2_sig_<pid>_hup   reload lists
@@ -765,7 +799,10 @@ void wn_control_poll(void)
 		if (wn_ctl_events[i] && WaitForSingleObject(wn_ctl_events[i], 0) == WAIT_OBJECT_0)
 		{
 			void (*h)(int) = sig_handlers[wn_ctl_sigs[i].sig];
-			if (h) h(wn_ctl_sigs[i].sig);
+			if (h)
+				h(wn_ctl_sigs[i].sig);
+			else if (wn_ctl_sigs[i].sig == SIGTERM)
+				exit(0); // default action of the signal. zapret1 has no handler for it
 		}
 }
 DWORD wn_WaitForSingleObject(HANDLE h, DWORD ms)
@@ -817,7 +854,7 @@ static int ctl_send(const char *spec)
 			CloseHandle(h);
 		}
 	}
-	if (!sent) fprintf(stderr, "no running winws2 accepted the signal\n");
+	if (!sent) fprintf(stderr, "no running engine accepted the signal\n");
 	return sent ? 0 : 1;
 }
 
