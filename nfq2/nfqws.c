@@ -2309,6 +2309,7 @@ int main(int argc, char **argv)
 		DLOG_ERR("out of memory\n");
 		exit_clean(1);
 	}
+	*params.windivert_filter = 0;
 #endif
 
 	while ((v = getopt_long_only(argc, argv, "", long_options, &option_index)) != -1)
