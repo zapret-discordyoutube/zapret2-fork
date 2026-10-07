@@ -1953,6 +1953,12 @@ void config_from_file(const char *filename)
 		DLOG_ERR("could not load config file '%s'\n", filename);
 		exit_clean(1);
 	}
+	if (bufsize == sizeof(buf) - 3)
+	{
+		// load_file reads no more than the buffer. the rest would be silently lost
+		DLOG_ERR("config file '%s' is too large. max size is %zu bytes\n", filename, sizeof(buf) - 4);
+		exit_clean(1);
+	}
 	buf[bufsize + 2] = 0;
 	// wordexp fails if it sees \t \n \r between args
 	replace_char(buf, '\n', ' ');
