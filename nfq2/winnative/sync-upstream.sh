@@ -23,9 +23,10 @@ log() { echo "$(date '+%F %T') $*"; }
 agent() {
 	[ -n "$WN_AGENT" ] || return 1
 	log "asking agent: $1"
-	$WN_AGENT -p --model sonnet --permission-mode acceptEdits \
-		--allowedTools "Read,Edit,Write,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(nfq2/winnative/build.sh:*)" \
-		"You maintain a fork of bol-van/zapret2 in $ROOT. The fork adds nfq2/winnative/ : a native Windows (llvm-mingw) build of winws2 without cygwin, done by a force-included compat.h that emulates cygwin, compat.c that replaces the cygwin runtime and batch.c. Upstream files must stay as upstream wrote them : always take the upstream version of upstream files and adapt only files inside nfq2/winnative/. Never run git commit, git push, git merge or git reset. Task: $1 When finished, nfq2/winnative/build.sh must succeed." </dev/null
+	# the prompt goes through stdin : --allowedTools takes a list and would swallow a positional prompt
+	printf '%s\n' "You maintain a fork of bol-van/zapret2 in $ROOT. The fork adds nfq2/winnative/ : a native Windows (llvm-mingw) build of winws2 without cygwin, done by a force-included compat.h that emulates cygwin, compat.c that replaces the cygwin runtime, args.c and batch.c. The fork also carries a few small bug fixes in upstream files as separate commits (see git log). When upstream changes the same place, take the upstream version of the code and keep our fix only if it is still needed and still correct; otherwise adapt only files inside nfq2/winnative/. Never run git commit, git push, git merge or git reset. Task: $1 When finished, nfq2/winnative/build.sh must succeed." |
+		$WN_AGENT -p --model sonnet --permission-mode acceptEdits \
+			--allowedTools "Read,Edit,Write,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(nfq2/winnative/build.sh:*),Bash(bash nfq2/winnative/build.sh:*),Bash(sh nfq2/winnative/build.sh:*)"
 }
 
 build() { nfq2/winnative/build.sh >"$ROOT/binaries/my/build.log" 2>&1; }
