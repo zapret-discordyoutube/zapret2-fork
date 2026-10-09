@@ -1692,7 +1692,17 @@ static bool windivert_recv_filter(HANDLE hFilter, uint8_t *packet, size_t *len, 
 				// make signals working
 				if (WaitForSingleObject(ovl.hEvent,twait)!=WAIT_TIMEOUT) break;
 				if (windivert_recv_exit())
-					return false;
+				{
+					// do not leave the read pending. caller frees the buffers on quit
+					// and the driver would write a late packet to the freed memory
+					CancelIoEx(hFilter,&ovl);
+					if (!GetOverlappedResult(hFilter,&ovl,&rd,TRUE))
+						return false;
+					// a packet came before the cancel. process it. exit condition is checked again on the next call
+					*wa_count = wac/sizeof(WINDIVERT_ADDRESS);
+					*len = rd;
+					return true;
+				}
 				if (params.timers && !tmax)
 				{
 					bt = boottime_ms();
