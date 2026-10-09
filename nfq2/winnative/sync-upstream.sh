@@ -7,6 +7,11 @@
 #   WN_WIN_HOST  - ssh host of a windows machine for the smoke test (default : win10). empty = skip
 #   WN_WIN_DIR   - directory on that machine with WinDivert.dll (default : C:/winws2-test/exe)
 #   WN_AGENT     - command of the agent (default : claude). empty = no agent, just fail
+#
+# Exit codes tell the caller why nothing was synced (engine_autoupdate.py of ZapretGUI maps them to messages) :
+#   0 synced or nothing to do      10 somebody works in the tree    11 no network (fetch or push)
+#   12 merge conflict              13 build failed                  14 host tests failed
+#   15 smoke test on windows failed
 
 set -u
 
@@ -40,30 +45,35 @@ smoke() {
 
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
 	log "working tree is not clean. stop"
-	exit 1
+	exit 10
 fi
-git fetch -q upstream || { log "fetch failed"; exit 1; }
+git fetch -q upstream || { log "fetch failed"; exit 11; }
 if git merge-base --is-ancestor upstream/master HEAD; then
 	log "already up to date"
+	# a push that failed last time must not be forgotten : the engine release refers to this commit
+	if [ -n "$(git rev-list -n 1 origin/main..HEAD 2>/dev/null)" ]; then
+		git push -q origin main || { log "push failed"; exit 11; }
+		log "pushed commits left from the previous run"
+	fi
 	exit 0
 fi
 BEFORE=$(git rev-parse HEAD)
-rollback() { git merge --abort 2>/dev/null; git reset -q --hard "$BEFORE"; log "rolled back: $1"; exit 1; }
+rollback() { git merge --abort 2>/dev/null; git reset -q --hard "$BEFORE"; log "rolled back: $2"; exit "$1"; }
 
 log "merging $(git rev-parse --short upstream/master)"
 mkdir -p "$ROOT/binaries/my"
 if ! git merge -q --no-edit upstream/master; then
-	agent "git merge of upstream/master stopped with conflicts. Resolve them (see git status), git add the resolved files." || rollback "merge conflict"
-	[ -z "$(git diff --name-only --diff-filter=U)" ] || rollback "conflicts left"
-	git commit -q --no-edit || rollback "merge commit failed"
+	agent "git merge of upstream/master stopped with conflicts. Resolve them (see git status), git add the resolved files." || rollback 12 "merge conflict"
+	[ -z "$(git diff --name-only --diff-filter=U)" ] || rollback 12 "conflicts left"
+	git commit -q --no-edit || rollback 12 "merge commit failed"
 fi
 if ! build; then
-	agent "nfq2/winnative/build.sh fails after merging new upstream commits. The log is binaries/my/build.log. Fix files in nfq2/winnative/ so that it builds." || rollback "build failed"
-	build || rollback "build still fails"
+	agent "nfq2/winnative/build.sh fails after merging new upstream commits. The log is binaries/my/build.log. Fix files in nfq2/winnative/ so that it builds." || rollback 13 "build failed"
+	build || rollback 13 "build still fails"
 	git add nfq2/winnative
 	git commit -q -m "winws2 native: adapt compat layer to upstream changes" || true
 fi
-nfq2/winnative/tests/run.sh >>"$ROOT/binaries/my/build.log" 2>&1 || rollback "host tests failed"
-smoke || rollback "smoke test failed"
-git push -q origin main || { log "push failed"; exit 1; }
+nfq2/winnative/tests/run.sh >>"$ROOT/binaries/my/build.log" 2>&1 || rollback 14 "host tests failed"
+smoke || rollback 15 "smoke test failed"
+git push -q origin main || { log "push failed"; exit 11; }
 log "synced to $(git describe --tags --always)"
