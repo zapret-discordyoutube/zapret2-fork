@@ -256,8 +256,12 @@ void wn_control_poll(void);
 #include "windivert/windivert.h"
 BOOL wn_WinDivertRecvEx(HANDLE handle, VOID *pPacket, UINT packetLen, UINT *pRecvLen, UINT64 flags, WINDIVERT_ADDRESS *pAddr, UINT *pAddrLen, LPOVERLAPPED lpOverlapped);
 BOOL wn_WinDivertSend(HANDLE handle, const VOID *pPacket, UINT packetLen, UINT *pSendLen, const WINDIVERT_ADDRESS *pAddr);
+BOOL wn_WinDivertClose(HANDLE handle);
+int wn_usleep(useconds_t us);
 #define WinDivertRecvEx wn_WinDivertRecvEx
 #define WinDivertSend wn_WinDivertSend
+#define WinDivertClose wn_WinDivertClose
+#define usleep wn_usleep
 
 // real entry point is in compat.c. it converts utf-16 command line to utf-8 argv
 #define main wn_main

@@ -3,13 +3,20 @@
 // Here consecutive unmodified packets of the received bulk are collected and sent by one WinDivertSendEx call.
 // Order of packets on the wire is preserved : anything else that is sent (modified packet, fake from lua)
 // flushes the collected run first. Next receive flushes it too.
-// Upstream sources are not changed. WinDivertRecvEx/WinDivertSend are redirected here by macros in compat.h.
+// The run must not outlive the receive loop : on quit and when the logical network disappears upstream returns
+// from windivert_recv() before the next receive, frees the receive buffer and closes the filter handle.
+// Both exits start with usleep(0), so usleep flushes the run as well. WinDivertClose forgets the run of the handle
+// and never touches the collected packets : on quit the receive buffer is already freed when the handle is closed.
+// Upstream sources are not changed. WinDivertRecvEx/WinDivertSend/WinDivertClose/usleep are redirected here
+// by macros in compat.h.
 // Set environment variable WINWS2_NO_BATCH=1 to turn batching off.
 
 #include "windivert/windivert.h"
 
 #undef WinDivertRecvEx
 #undef WinDivertSend
+#undef WinDivertClose
+#undef usleep
 
 static const uint8_t *rcv_buf = NULL;	// last receive buffer
 static size_t rcv_size = 0;
@@ -70,4 +77,30 @@ BOOL wn_WinDivertSend(HANDLE handle, const VOID *pPacket, UINT packetLen, UINT *
 	}
 	wn_batch_flush();
 	return WinDivertSend(handle, pPacket, packetLen, pSendLen, pAddr);
+}
+
+BOOL wn_WinDivertClose(HANDLE handle)
+{
+	if (run_handle == handle)
+	{
+		run_handle = NULL;
+		run_count = 0;
+		run_len = 0;
+	}
+	// the receive buffer may be freed after the close. next receive sets it again
+	rcv_buf = NULL;
+	rcv_addr = NULL;
+	rcv_addr_count = 0;
+	return WinDivertClose(handle);
+}
+
+// upstream calls usleep(0) to "make signals working" before it checks the quit flag and the logical network.
+// do what cygwin did there : send what is held and deliver the pending control events.
+// the waiting loop "logical network is not present" sleeps by usleep too and gets the stop request this way
+int wn_usleep(useconds_t us)
+{
+	wn_batch_flush();
+	int r = usleep(us);
+	wn_control_poll();
+	return r;
 }
