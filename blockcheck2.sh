@@ -81,6 +81,7 @@ DNSCHECK_DIG1=/tmp/dig1.txt
 DNSCHECK_DIG2=/tmp/dig2.txt
 DNSCHECK_DIGS=/tmp/digs.txt
 
+GUARD_TIMER="timer_set('exit_guard',function(name,data) io.stderr:write('exit_guard\n'); os.exit(3000); end,20000,true)"
 
 unset PF_STATUS
 PF_RULES_SAVE=/tmp/pf-zapret-save.conf
@@ -1016,17 +1017,17 @@ pktws_start()
 {
 	case "$UNAME" in
 		Linux)
-			"$NFQWS2" --uid $WS_UID:$WS_GID --fwmark=$DESYNC_MARK --qnum=$QNUM --lua-init=@"$ZAPRET_BASE/lua/zapret-lib.lua" --lua-init=@"$ZAPRET_BASE/lua/zapret-antidpi.lua" "$@" >/dev/null &
+			"$NFQWS2" --uid $WS_UID:$WS_GID --fwmark=$DESYNC_MARK --qnum=$QNUM --lua-init="$GUARD_TIMER" --lua-init=@"$ZAPRET_BASE/lua/zapret-lib.lua" --lua-init=@"$ZAPRET_BASE/lua/zapret-antidpi.lua" "$@" >/dev/null &
 			;;
 		FreeBSD|OpenBSD)
-			"$DVTWS2" --port=$IPFW_DIVERT_PORT --lua-init=@"$ZAPRET_BASE/lua/zapret-lib.lua" --lua-init=@"$ZAPRET_BASE/lua/zapret-antidpi.lua" "$@" >/dev/null &
+			"$DVTWS2" --port=$IPFW_DIVERT_PORT --lua-init="$GUARD_TIMER" --lua-init=@"$ZAPRET_BASE/lua/zapret-lib.lua" --lua-init=@"$ZAPRET_BASE/lua/zapret-antidpi.lua" "$@" >/dev/null &
 			;;
 		CYGWIN)
 			# some methods require empty acks
 			# use raw filter to filter target ip addresses in-kernel to allow multiple blockchecks running at the same time
 			# use guard timer to kill unmanaged pktws instances
 			"$WINWS2" --wf-tcp-empty=1 $WF --wf-raw-filter="$WFRAWF" \
-				--lua-init="timer_set('exit_guard',function(name,data) io.stderr:write('exit_guard\n'); os.exit(3000); end,20000,true)" \
+				--lua-init="$GUARD_TIMER" \
 				--lua-init=@"$ZAPRET_BASE/lua/zapret-lib.lua" --lua-init=@"$ZAPRET_BASE/lua/zapret-antidpi.lua" "$@" >/dev/null &
 			;;
 	esac
