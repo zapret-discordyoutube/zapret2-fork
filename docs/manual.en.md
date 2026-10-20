@@ -696,8 +696,8 @@ MULTI-STRATEGY:
 
 LUA PACKET PASS MODE:
  --payload=type[,type]                                  ; in-profile filter: payload filter for subsequent instances within the profile
- --out-range=[(n|a|d|s|p)<int>](-|<)[(n|a|d|s|p)<int>]  ; in-profile filter: conntrack counter range for subsequent instances within the profile - outgoing direction
- --in-range=[(n|a|d|s|p)<int>](-|<)[(n|a|d|s|p)<int>]   ; in-profile filter: conntrack counter range for subsequent instances within the profile - incoming direction
+ --out-range=<mode>[<int>][(-|<)<mode>[<int>]]          ; in-profile filter: conntrack counter range for subsequent instances within the profile - outgoing direction
+ --in-range=<mode>[<int>][(-|<)<mode>[<int>]]           ; in-profile filter: conntrack counter range for subsequent instances within the profile - incoming direction
 
 LUA DESYNC ACTION:
  --lua-desync=<function>[:param1=val1[:param2=val2]]    ; call a LUA instance with the specified parameters during profile processing if in-profile filter conditions are met
@@ -1065,7 +1065,7 @@ Names are case-sensitive.
 These come in three types: `--payload`, `--in-range`, and `--out-range`. Filter values remain active from the moment they are specified until the next override.
 
 - `--payload=type1[,type2][,type3]...` accepts a comma-separated list of known [payloads](#protocol-detection), "all", or "known". The default is `--payload=all`.
-- `--(in-range|out-range)=[(n|a|d|s|p)<int>](-|<)[(n|a|d|s|p)<int>]` sets conntrack counter ranges for inbound and outbound directions. The default is `--in-range=x`, `--out-range=a`.
+- `--(in-range|out-range)=<mode>[<int>][(-|<)<mode>[<int>]]` sets conntrack counter ranges for inbound and outbound directions. The default is `--in-range=x`, `--out-range=a`.
 
 Ranges are specified in the following formats: `mX-mY`, `mX<mY`, `-mY`, `<mY`, `mX-`, where `m` is the counter mode, `X` is the lower bound, and `Y` is the upper bound. Modes `x` and `a` are specified as a single letter without a range or counter value. The `-` sign indicates an inclusive upper bound, while `<` indicates an exclusive one.
 
@@ -3464,7 +3464,7 @@ The `ipfrag_options` contain only two standard parameters. The rest are handled 
 
 | Field           | Description                                                                                                         |
 | :-------------- | :------------------------------------------------------------------------------------------------------------------ |
-| ipfrag          | Name of the fragmenter function. If not specified, `ipfrag2` is used. The fragmenter returns an array of dissects (fragments). |
+| ipfrag          | Name of the fragmenter function. If specified with no value, `ipfrag2` is used. The fragmenter returns an array of dissects (fragments). |
 | ipfrag_disorder | Send fragments in reverse order.                                                                                    |
 | ipfrag_pos_udp  | (ipfrag2 fragmenter) UDP fragmentation position. Must be a multiple of 8; defaults to 8.                            |
 | ipfrag_pos_tcp  | (ipfrag2 fragmenter) TCP fragmentation position. Must be a multiple of 8; defaults to 32.                           |
@@ -4206,7 +4206,7 @@ function hostfakesplit(ctx, desync)
 - arg: host - template for [fake host generation](#genhost) - random.template
 - arg: midhost - [marker](#markers) for an additional split of the segment containing the real host.
 - arg: disorder_after - [marker](#markers) for an additional split of the final real part and sending segments in reverse order.
-- arg: nofake, nofake2 - skip sending specific fake packets.
+- arg: nofake1, nofake2 - skip sending specific fake packets.
 - arg: blob - replace the current payload with the specified [blob](#passing-blobs).
 - arg: optional - abort the operation if the blob is specified but missing.
 - arg: nodrop - skip issuing a VERDICT_DROP.
@@ -4421,7 +4421,7 @@ function automate_failure_counter(hrec, crec, fails, maxtime)
 - hrec - [host storage](#automate_host_record)
 - crec - [stream storage](#automate_conn_record)
 - fails - the target number of failures.
-- maxtime - the time in seconds after which, since the last failure, the next failure restarts the count from scratch.
+- time - the time in seconds after which, since the last failure, the next failure restarts the count from scratch.
 
 Returns `true` if the counter reaches the `fails` value. The counter is reset upon returning `true`.
 
@@ -4928,6 +4928,8 @@ MULTIDISORDER=multidisorder_legacy - replace multidisorder with the version from
 NOTEST_BASIC_HTTP=1 - disable 10-http-basic.sh tests
 NOTEST_MISC_HTTP=1 - disable http 15-misc.sh tests
 NOTEST_MISC_HTTPS=1 - disable https 15-misc.sh tests
+NOTEST_OOB_HTTP=1 - disable http 17-oob.sh tests
+NOTEST_OOB_HTTPS=1 - disable https 17-oob.sh tests
 NOTEST_MULTI_HTTP=1 - disable http 20-multi.sh tests
 NOTEST_MULTI_HTTPS=1 - disable https 20-multi.sh tests
 NOTEST_SEQOVL_HTTP=1 - disable http 23-seqovl.sh tests
@@ -4940,6 +4942,7 @@ NOTEST_FAKED_HTTP=1 - disable http 25-faked.sh tests
 NOTEST_FAKED_HTTPS=1 - disable https 25-faked.sh tests
 NOTEST_HOSTFAKE_HTTP=1 - disable http 35-hostfake.sh tests
 NOTEST_HOSTFAKE_HTTPS=1 - disable https 35-hostfake.sh tests
+HOSTFAKE=host - specify hostname for hostfakesplit
 NOTEST_FAKE_MULTI_HTTP=1 - disable http 50-fake-multi.sh tests
 NOTEST_FAKE_MULTI_HTTPS=1 - disable https 50-fake-multi.sh tests
 NOTEST_FAKE_FAKED_HTTP=1 - disable http 55-fake-faked.sh tests
