@@ -350,3 +350,4 @@ v0.9.4.3
 * blockcheck2: CURL_PAD - add junk headers to increase request size and trigger 16-kb block without large downloaded data
 * blockcheck2: in addition to COMMON print COVERAGE section with how many domains worked for each strategy
 * blockcheck2: sweep old temp files after hard kill or crash
+* blockcheck2: request PACE-ing
