@@ -34,6 +34,7 @@ DVTWS2=${DVTWS2:-${ZAPRET_BASE}/nfq2/dvtws2}
 WINWS2=${WINWS2:-${ZAPRET_BASE}/nfq2/winws2}
 MDIG=${MDIG:-${ZAPRET_BASE}/mdig/mdig}
 DESYNC_MARK=0x10000000
+PACE=${PACE:-0}
 CURL_MAX_TIME=${CURL_MAX_TIME:-2}
 CURL_MAX_TIME_QUIC=${CURL_MAX_TIME_QUIC:-$CURL_MAX_TIME}
 CURL_MAX_TIME_DOH=${CURL_MAX_TIME_DOH:-2}
@@ -698,8 +699,13 @@ curl_with_subst_ip()
 	local connect_to="--connect-to $1::$ip${2:+:$2}" arg
 	shift ; shift ; shift;
 	[ "$CURL_VERBOSE" = 1 ] && arg="-v"
-	[ "$CURL_CMD" = 1 ] && echo $CURL ${arg:+$arg }$connect_to "$@"
-	ALL_PROXY="$ALL_PROXY" "$CURL" ${arg:+$arg }$connect_to "$@"
+	[ "$CURL_CMD" = 1 ] && echo $CURL -w "%{time_total}" ${arg:+$arg }$connect_to "$@"
+	local tooks
+	tooks=$(ALL_PROXY="$ALL_PROXY" "$CURL" -w "%{time_total}" ${arg:+$arg }$connect_to "$@")
+	local ret=$?
+	local tookms=$(awk "BEGIN {print int($tooks * 1000)}")
+	[ "$PACE" -gt "$tookms" ] && msleep $(($PACE - $tookms))
+	return "$ret"
 }
 curl_with_dig()
 {
