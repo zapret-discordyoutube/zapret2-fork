@@ -38,18 +38,6 @@ PACE=${PACE:-0}
 CURL_MAX_TIME=${CURL_MAX_TIME:-2}
 CURL_MAX_TIME_QUIC=${CURL_MAX_TIME_QUIC:-$CURL_MAX_TIME}
 CURL_MAX_TIME_DOH=${CURL_MAX_TIME_DOH:-2}
-# CURL_PAD pads every curl request with the given number of bytes, useful
-# for the "16 KB" whitelist-style block (see docs): that block triggers on
-# total bytes transferred on the connection, not on how much of it was an
-# actual response, so padding the request is enough to test for it even
-# against a target with no large page of its own to download - e.g. a bare
-# IP from a provider's range rather than a known blocked domain. The padding
-# is written straight to a small temp file (nothing large ever passes
-# through a shell variable, command substitution, or argument) and attached
-# as a header with curl's own @filename form of -H, which reads the file
-# instead of taking the value on the command line - unlike an equivalent
-# amount of data passed via --data/--data-binary, this doesn't conflict with
-# HEAD requests, so it composes cleanly with CURL_HTTPS_GET either way.
 CURL_PAD=${CURL_PAD:-0}
 PAD_MAX_HEADER=${PAD_MAX_HEADER:-4000}
 USER_AGENT=${USER_AGENT:-Mozilla}
@@ -64,15 +52,19 @@ IPFW_RULE_NUM=${IPFW_RULE_NUM:-$(($$ % $IPFW_RULE_MAX + 1))}
 IPFW_DIVERT_PORT=${IPFW_DIVERT_PORT:-$(($$ % 64536 + 1000))}
 QNUM=${QNUM:-$(($$ % 64536 + 1000))}
 
-PARALLEL_OUT_TEMPLATE=/tmp/zapret_parallel_
+PARALLEL_OUT_TEMPLATE=/tmp/zapret2_parallel_
 PARALLEL_OUT=$PARALLEL_OUT_TEMPLATE$$
-HDRTEMP_TEMPLATE=/tmp/zapret-hdr-$$
+HDRTEMP_TEMPLATE=/tmp/zapret2-hdr-
 HDRTEMP=$HDRTEMP_TEMPLATE$$
+CURL_PAD_FILE_TEMPLATE=/tmp/zapret2-curlpad-
 
-NFT_TABLE=blockcheck$$
-IPT_OUT_CHAIN=blockcheck_output_$$
-IPT_IN_CHAIN=blockcheck_input_$$
-IPT_COMMENT="-m comment --comment blockcheck_$$"
+NFT_TABLE_TEMPLATE=blockcheck2-
+NFT_TABLE=$NFT_TABLE_TEMPLATE$$
+IPT_OUT_CHAIN_TEMPLATE=blockcheck2_output_
+IPT_OUT_CHAIN=$IPT_OUT_CHAIN_TEMPLATE$$
+IPT_IN_CHAIN_TEMPLATE=blockcheck2_input_
+IPT_IN_CHAIN=$IPT_IN_CHAIN_TEMPLATE$$
+IPT_COMMENT="-m comment --comment blockcheck2_$$"
 
 DNSCHECK_DNS=${DNSCHECK_DNS:-8.8.8.8 1.1.1.1 77.88.8.1}
 DNSCHECK_DOM=${DNSCHECK_DOM:-pornhub.com ej.ru rutracker.org www.torproject.org bbc.com}
@@ -84,30 +76,32 @@ DNSCHECK_DIGS=/tmp/digs.txt
 GUARD_TIMER="timer_set('exit_guard',function(name,data) io.stderr:write('exit_guard\n'); os.exit(3000); end,20000,true)"
 
 unset PF_STATUS
-PF_RULES_SAVE=/tmp/pf-zapret-save.conf
+PF_RULES_SAVE=/tmp/pf-zapret2-save.conf
 
 unset ALL_PROXY
 
 apply_header_padfile()
 {
 	local n=1 left size f pid
+
+	# A normal exit already removes this run's own pad file (see
+	# cleanup() below), which covers Ctrl+C, a closed terminal, and
+	# a plain kill. kill -9 and crashes bypass that, as they would
+	# for any script's cleanup, so sweep any such leftover from
+	# a previous run before making this run's own - only once its PID
+	# is confirmed no longer running, so a genuinely still-running
+	# concurrent instance (different PID, its own file) is never
+	# touched
+	for f in $CURL_PAD_FILE_TEMPLATE*; do
+		[ -e "$f" ] || continue
+		pid=${f##*-}
+		case "$pid" in ''|*[!0-9]*) continue ;; esac
+		kill -0 "$pid" 2>/dev/null || rm -f "$f"
+	done
+
 	if [ "$CURL_PAD" -gt 0 ] 2>/dev/null; then
-		# A normal exit already removes this run's own pad file (see
-		# cleanup() below), which covers Ctrl+C, a closed terminal, and
-		# a plain kill. kill -9 and crashes bypass that, as they would
-		# for any script's cleanup, so sweep any such leftover from
-		# a previous run before making this run's own - only once its PID
-		# is confirmed no longer running, so a genuinely still-running
-		# concurrent instance (different PID, its own file) is never
-		# touched
-		for f in /tmp/zapret-curlpad-*; do
-			[ -e "$f" ] || continue
-			pid=${f##*-}
-			case "$pid" in ''|*[!0-9]*) continue ;; esac
-			kill -0 "$pid" 2>/dev/null || rm -f "$f"
-		done
 		left=$CURL_PAD
-		CURL_PAD_FILE=/tmp/zapret-curlpad-$$
+		CURL_PAD_FILE=$CURL_PAD_FILE_TEMPLATE$$
 		rm -f "$CURL_PAD_FILE"
 		touch "$CURL_PAD_FILE"
 		while [ "$left" -ge 14 ]; do
@@ -122,7 +116,7 @@ apply_header_padfile()
 			[ "$left" -lt 14 ] && size=$(($size+$left))
 
 			printf 'X-Pad-%04d: ' $n >> "$CURL_PAD_FILE"
-			head -c $size /dev/zero | tr '\0' A >> "$CURL_PAD_FILE"
+			printf "%${size}s" | tr ' ' 'A' >> "$CURL_PAD_FILE"
 			# curl internally adds 0D0A line ending even if it's 0A in the file
 			echo >> "$CURL_PAD_FILE"
 			n=$(($n+1))
@@ -1012,6 +1006,38 @@ pktws_ipt_unprepare_udp()
 	pktws_ipt_unprepare udp $1
 }
 
+pktws_ipt_sweep()
+{
+	# remove leftovers after hard kill/crash
+
+	local f pid IPTABLES
+	case "$FWTYPE" in
+		nftables)
+			nft list tables | grep '^table inet blockcheck2-' | while IFS= read -r f; do
+				pid=${f##*-}
+				case "$pid" in ''|*[!0-9]*) continue ;; esac
+				kill -0 "$pid" 2>/dev/null || nft delete $f
+			done
+			;;
+		iptables)
+			for IPTABLES in iptables ip6tables; do
+				$IPTABLES -t mangle -S | grep -o -e "INPUT -j $IPT_IN_CHAIN_TEMPLATE[0-9]\+" -e "OUTPUT -j $IPT_OUT_CHAIN_TEMPLATE[0-9]\+" | while IFD= read -r f; do
+					pid=${f##*_}
+					case "$pid" in ''|*[!0-9]*) continue ;; esac
+					kill -0 "$pid" 2>/dev/null || $IPTABLES -t mangle -D $f
+				done
+				$IPTABLES -t mangle -S | grep -o -e "$IPT_IN_CHAIN_TEMPLATE[0-9]\+" -e "$IPT_OUT_CHAIN_TEMPLATE[0-9]\+" | sort -u | while IFD= read -r f; do
+					pid=${f##*_}
+					case "$pid" in ''|*[!0-9]*) continue ;; esac
+					kill -0 "$pid" 2>/dev/null || {
+						$IPTABLES -t mangle -F $f
+						$IPTABLES -t mangle -X $f
+					}
+				done
+			done
+			;;
+	esac
+}
 
 pktws_start()
 {
@@ -1960,6 +1986,13 @@ sweep_stale_pidfiles()
 	done
 }
 
+sweep_leftovers()
+{
+	sweep_stale_pidfiles $PARALLEL_OUT_TEMPLATE
+	sweep_stale_pidfiles $HDRTEMP_TEMPLATE
+	pktws_ipt_sweep
+}
+
 
 block_signals()
 {
@@ -2013,8 +2046,7 @@ fix_sbin_path
 check_system
 check_already
 [ "$UNAME" != CYGWIN  -a "$SKIP_PKTWS" != 1 ] && require_root
-sweep_stale_pidfiles $PARALLEL_OUT_TEMPLATE
-sweep_stale_pidfiles $HDRTEMP_TEMPLATE
+sweep_leftovers
 check_prerequisites
 trap sigint_cleanup INT
 check_dns
