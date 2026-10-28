@@ -258,7 +258,7 @@ function udp2icmp(ctx, desync)
 		local id = bitxor(desync.dis.udp.uh_sport,desync.dis.udp.uh_dport)
 		if desync.arg.cgnat then
 			if bserver then
-				-- extract original icmp identifier from the map. it must much original or NAT will not deliver
+				-- extract original icmp identifier from the map. it must match original or NAT will not deliver
 				local map_id = (desync.dis.ip6 and desync.dis.ip6.ip6_dst or desync.dis.ip.ip_dst)..
 					(desync.dis.ip6 and desync.dis.ip6.ip6_src or desync.dis.ip.ip_src)..
 					bu16(desync.dis.udp.uh_dport)..bu16(desync.dis.udp.uh_sport)
