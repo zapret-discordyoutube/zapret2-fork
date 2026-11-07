@@ -1,12 +1,13 @@
 #!/bin/sh
 # Keeps the fork up to date with bol-van/zapret2 : merge upstream, build, smoke test on windows, push.
-# Runs from a systemd user timer. Conflicts and build breaks are handed to a headless Claude Code agent;
+# Runs from a systemd user timer. Conflicts and build breaks are handed to a headless agent (Codex by default, Claude Code also works);
 # if it cannot fix them the merge is rolled back and nothing is pushed.
 #
 # Environment :
 #   WN_WIN_HOST  - ssh host of a windows machine for the smoke test (default : win10). empty = skip
 #   WN_WIN_DIR   - directory on that machine with WinDivert.dll (default : C:/winws2-test/exe)
-#   WN_AGENT     - command of the agent (default : claude). empty = no agent, just fail
+#   WN_AGENT     - command of the agent (default : codex; "claude" is also understood). empty = no agent, just fail
+#   CODEX_HOME   - login and config of Codex (default : ~/.codex-work)
 #
 # Exit codes tell the caller why nothing was synced (engine_autoupdate.py of ZapretGUI maps them to messages) :
 #   0 synced or nothing to do      10 somebody works in the tree    11 no network (fetch or push)
@@ -19,7 +20,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 WN_WIN_HOST=${WN_WIN_HOST-win10}
 WN_WIN_DIR=${WN_WIN_DIR-C:/winws2-test/exe}
-WN_AGENT=${WN_AGENT-claude}
+WN_AGENT=${WN_AGENT-codex}
 EXE=$ROOT/binaries/my/winnative-x86_64/winws2.exe
 
 cd "$ROOT" || exit 1
@@ -30,8 +31,17 @@ agent() {
 	log "asking agent: $1"
 	# the prompt goes through stdin : --allowedTools takes a list and would swallow a positional prompt
 	printf '%s\n' "You maintain a fork of bol-van/zapret2 in $ROOT. The fork adds nfq2/winnative/ : a native Windows (llvm-mingw) build of winws2 without cygwin, done by a force-included compat.h that emulates cygwin, compat.c that replaces the cygwin runtime, args.c and batch.c. The fork also carries a few small bug fixes in upstream files as separate commits (see git log). When upstream changes the same place, take the upstream version of the code and keep our fix only if it is still needed and still correct; otherwise adapt only files inside nfq2/winnative/. Never run git commit, git push, git merge or git reset. Task: $1 When finished, nfq2/winnative/build.sh must succeed." |
-		$WN_AGENT -p --model sonnet --permission-mode acceptEdits \
-			--allowedTools "Read,Edit,Write,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(nfq2/winnative/build.sh:*),Bash(bash nfq2/winnative/build.sh:*),Bash(sh nfq2/winnative/build.sh:*)"
+		case "$(basename "${WN_AGENT%% *}")" in
+		codex)
+			# Codex : the prompt is read from stdin ("-"); it may write in the fork and in the build deps, not elsewhere
+			CODEX_HOME=${CODEX_HOME:-$HOME/.codex-work} $WN_AGENT exec --model gpt-5.6-sol --sandbox workspace-write \
+				--skip-git-repo-check --ephemeral -C "$ROOT" --add-dir "${WN_DEPS:-$HOME/tools/winws2-deps}" -
+			;;
+		*)
+			$WN_AGENT -p --model sonnet --permission-mode acceptEdits \
+				--allowedTools "Read,Edit,Write,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(nfq2/winnative/build.sh:*),Bash(bash nfq2/winnative/build.sh:*),Bash(sh nfq2/winnative/build.sh:*)"
+			;;
+		esac
 }
 
 build() { nfq2/winnative/build.sh >"$ROOT/binaries/my/build.log" 2>&1; }
