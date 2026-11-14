@@ -367,4 +367,4 @@ v0.9.4.3
 
 * nfqws2: disable more syscalls
 * nfqws2: can_drop_root() now checks /proc/self/setgroups
-
+* install_bin: prefer ELF method to fix arch selection when qemu-user-static is installed
