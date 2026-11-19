@@ -1319,7 +1319,7 @@ static bool play_prolog(
 				{
 					if (ipcache_get_hostname(ps->sdip4, ps->sdip6, ps->host, sizeof(ps->host), &hostname_is_ip))
 					{
-						if (hostname = ps->ctrack->hostname = strdup(ps->host))
+						if ((hostname = ps->ctrack->hostname = strdup(ps->host)))
 							ps->ctrack->hostname_is_ip = hostname_is_ip;
 						else
 							DLOG_ERR("strdup(host): out of memory\n");
@@ -1919,7 +1919,9 @@ static uint8_t dpi_desync_udp_packet_play(
 
 							if (ps.ctrack && !reasm_disable)
 							{
-								if (bIsHello && !bReqFull && ReasmIsEmpty(&ps.ctrack->reasm_client))
+								if (!bIsHello) goto rediscover_cancel;
+
+								if (!bReqFull && ReasmIsEmpty(&ps.ctrack->reasm_client))
 								{
 									// preallocate max buffer to avoid reallocs that cause memory copy
 									if (!reasm_client_start(ps.ctrack, IPPROTO_UDP, L7P_QUIC_INITIAL, UDP_MAX_REASM, UDP_MAX_REASM, clean, clean_len))
