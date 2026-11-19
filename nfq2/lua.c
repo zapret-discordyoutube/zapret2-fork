@@ -1706,9 +1706,9 @@ void lua_pushf_ctrack_pos(lua_State *L, const t_ctrack *ctrack, const t_ctrack_p
 		lua_pushf_lint(L,"seq", pos->seq_last);
 		lua_pushf_lint(L,"rseq", pos->seq_last - pos->seq0);
 		lua_pushf_bool(L,"rseq_over_2G", pos->rseq_over_2G);
-		lua_pushf_int(L,"pos", pos->pos - pos->seq0);
-		lua_pushf_int(L,"uppos", pos->uppos - pos->seq0);
-		lua_pushf_int(L,"uppos_prev", pos->uppos_prev - pos->seq0);
+		lua_pushf_lint(L,"pos", pos->pos - pos->seq0);
+		lua_pushf_lint(L,"uppos", pos->uppos - pos->seq0);
+		lua_pushf_lint(L,"uppos_prev", pos->uppos_prev - pos->seq0);
 		lua_pushf_int(L,"winsize", pos->winsize);
 		lua_pushf_int(L,"winsize_calc", pos->winsize_calc);
 		lua_pushf_int(L,"scale", pos->scale);
@@ -2525,6 +2525,16 @@ bool lua_reconstruct_dissect(lua_State *L, int idx, uint8_t *buf, size_t *len, b
 			lpayload = 0;
 		lua_pop(L, 1);
 		l = data-buf;
+
+		if (ip)
+		{
+			ip->ip_len = htons((uint16_t)l);
+			ip4_fix_checksum(ip);
+		}
+		else if (ip6)
+		{
+			ip6->ip6_ctlun.ip6_un1.ip6_un1_plen = htons((uint16_t)(l-sizeof(struct ip6_hdr)));
+		}
 	}
 	else
 	{
@@ -2623,7 +2633,14 @@ bool lua_reconstruct_dissect(lua_State *L, int idx, uint8_t *buf, size_t *len, b
 				}
 				udp->uh_ulen = htons((uint16_t)sz);
 				udp_fix_checksum(udp,l-l3,ip,ip6);
-				if (badsum) udp->uh_sum ^= 1 + (random() % 0xFFFF);
+				if (badsum)
+				{
+					// do not allow zero checksum
+					uint16_t old_sum = udp->uh_sum;
+					do
+						udp->uh_sum = 1 + (random() % 0xFFFF);
+					while(udp->uh_sum==old_sum);
+				}
 			}
 			else if (icmp)
 			{
@@ -2686,7 +2703,7 @@ bool lua_reconstruct_dissect(lua_State *L, int idx, uint8_t *buf, size_t *len, b
 			else
 				ip6->ip6_ctlun.ip6_un1.ip6_un1_plen = htons((uint16_t)(l-sizeof(struct ip6_hdr)));
 		}
-	}
+	} // frag
 
 	*len = l;
 	LUA_STACK_GUARD_LEAVE(L, 0)
